@@ -14,14 +14,16 @@
  */
 package com.arecadata.clickstream;
 
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 
-import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.source.SocketTextStreamFunction;
 import org.apache.flink.types.Row;
+import org.apache.flink.types.RowKind;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
@@ -35,9 +37,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.arecadata.clickstream.sink.FlinkSink;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 
 public class ClickStream {
     private static final Logger LOGGER = LoggerFactory.getLogger(ClickStream.class);
+
+    private static final Map<String, RowKind> ROW_KIND_MAP = ImmutableMap.of("I", RowKind.INSERT, "D", RowKind.DELETE);
 
     public static void main(String[] args) throws Exception {
         LOGGER.info("ClickStream started with args: {}", String.join(",", args));
@@ -58,35 +64,56 @@ public class ClickStream {
 
         // init table
         Schema schema =
-                new Schema(Types.NestedField.required(1, "character", Types.StringType.get()),
-                        Types.NestedField.required(2, "location", Types.StringType.get()),
-                        Types.NestedField.required(3, "event_time", Types.TimestampType.withZone()),
+                new Schema(Types.NestedField.required(1, "block_number", Types.IntegerType.get()),
+                        Types.NestedField.required(2, "hash", Types.StringType.get()),
+                        Types.NestedField.required(3, "timestamp", Types.TimestampType.withZone()),
                         Types.NestedField.required(4, "type", Types.StringType.get()));
 
         String databaseName = parameters.get("database", "test");
-        String tableName = parameters.get("table", "clickstream");
+        String tableName = parameters.get("table", "test");
         TableIdentifier outputTable = TableIdentifier.of(databaseName, tableName);
         if (!catalog.tableExists(outputTable)) {
-            catalog.createTable(outputTable, schema, PartitionSpec.unpartitioned());
+            catalog.createTable(outputTable, schema, PartitionSpec.unpartitioned(),
+                    ImmutableMap.of("format-version", "2", "write.upsert.enabled", "true"));
         }
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        env.enableCheckpointing(Integer.parseInt(parameters.get("checkpoint", "10000")));
+        env.setParallelism(1);
+        env.enableCheckpointing(Integer.parseInt(parameters.get("checkpoint", "5000")));
 
-        FakerSource source = new FakerSource();
-        source.setEventInterval(Float.parseFloat(parameters.get("event_interval", "5000")));
-        DataStream<Row> stream =
-                env.addSource(source).returns(TypeInformation.of(Map.class)).map(s -> {
-                    Row row = new Row(4);
-                    row.setField(0, s.get("character"));
-                    row.setField(1, s.get("location"));
-                    row.setField(2, s.get("event_time"));
-                    row.setField(3, s.get("type"));
-                    return row;
-                });
+        // use socketTextStream source
+        DataStream<String> dataStream =
+                env.addSource(new SocketTextStreamFunction("localhost", 9999, "\n", -1));
+
+        DataStream<Row> stream = dataStream.filter(s -> {
+            String[] fields = s.split(",");
+            return fields.length == 3;
+        }).map(s -> {
+            String[] fields = s.split(",");
+            RowKind rowKind = ROW_KIND_MAP.get(fields[0]);
+            return Row.ofKind(rowKind, Integer.parseInt(fields[1]), fields[2],
+                    Instant.ofEpochSecond(Instant.now().getEpochSecond()), fields[0]);
+        });
+
+        // use faker source
+        // FakerSource source = new FakerSource();
+        // source.setEventInterval(Float.parseFloat(parameters.get("event_interval", "5000")));
+        // DataStream<Row> stream =
+        // env.addSource(source).returns(TypeInformation.of(Map.class)).map(s -> {
+        // RowKind rowKind = ROW_KIND_MAP.get(s.get("type"));
+        // // Row row = new Row(4);
+        // // row.setField(0, s.get("character"));
+        // // row.setField(1, s.get("location"));
+        // // row.setField(2, s.get("event_time"));
+        // // row.setField(3, s.get("type"));
+        // return Row.ofKind(rowKind, s.get("block_number"), s.get("hash"),
+        // s.get("timestamp"), s.get("type"));
+        // });
+
         // Configure row-based append
         FlinkSink.forRow(stream, FlinkSchemaUtil.toSchema(schema))
-                .tableLoader(TableLoader.fromCatalog(catalogLoader, outputTable)).append();
+                .tableLoader(TableLoader.fromCatalog(catalogLoader, outputTable))
+                .equalityFieldColumns(ImmutableList.of("block_number")).upsert(true).append();
         // Execute the flink app
         env.execute();
     }

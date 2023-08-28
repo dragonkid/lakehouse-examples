@@ -55,11 +55,11 @@ public class FakerSource extends RichParallelSourceFunction<Map> {
         // long random = ThreadLocalRandom
         // .current()
         // .nextLong(fiveHundredYearsAgo, now);
-        record.put("character", faker.lordOfTheRings().character());
-        record.put("location", faker.lordOfTheRings().location());
-        record.put("event_time", Instant.ofEpochSecond(Instant.now().getEpochSecond()));
+        record.put("block_number", faker.random().nextInt(0, 10));
+        record.put("hash", faker.crypto().sha256());
+        record.put("timestamp", Instant.ofEpochSecond(Instant.now().getEpochSecond()));
         // random in insert and delete
-        record.put("type", faker.bool().bool() ? "insert" : "delete");
+        record.put("type", faker.bool().bool() ? "I" : "D");
         return record;
     }
 
