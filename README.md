@@ -1,4 +1,4 @@
-# Kafka, Flink & Iceberg
+# Flink & iceberg/paimon
 
 ## Build Flink Application
 
@@ -13,7 +13,6 @@ docker-compose up
 ```
 
 # Deploy Flink Application
-
 
 Navigate to [http://localhost:8888](http://localhost:8888) and create a new `Python3` notebook.
 
