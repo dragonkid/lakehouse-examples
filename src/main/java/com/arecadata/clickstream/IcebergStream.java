@@ -40,10 +40,11 @@ import com.arecadata.clickstream.sink.FlinkSink;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 
-public class ClickStream {
-    private static final Logger LOGGER = LoggerFactory.getLogger(ClickStream.class);
+public class IcebergStream {
+    private static final Logger LOGGER = LoggerFactory.getLogger(IcebergStream.class);
 
-    private static final Map<String, RowKind> ROW_KIND_MAP = ImmutableMap.of("I", RowKind.INSERT, "D", RowKind.DELETE);
+    private static final Map<String, RowKind> ROW_KIND_MAP =
+            ImmutableMap.of("I", RowKind.INSERT, "D", RowKind.DELETE);
 
     public static void main(String[] args) throws Exception {
         LOGGER.info("ClickStream started with args: {}", String.join(",", args));
@@ -73,8 +74,9 @@ public class ClickStream {
         String tableName = parameters.get("table", "test");
         TableIdentifier outputTable = TableIdentifier.of(databaseName, tableName);
         if (!catalog.tableExists(outputTable)) {
-            catalog.createTable(outputTable, schema, PartitionSpec.unpartitioned(),
-                    ImmutableMap.of("format-version", "2", "write.upsert.enabled", "true"));
+            catalog.createTable(outputTable, schema, PartitionSpec.unpartitioned(), ImmutableMap.of(
+                    // "write.upsert.enabled", "true",
+                    "format-version", "2"));
         }
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
@@ -113,7 +115,9 @@ public class ClickStream {
         // Configure row-based append
         FlinkSink.forRow(stream, FlinkSchemaUtil.toSchema(schema))
                 .tableLoader(TableLoader.fromCatalog(catalogLoader, outputTable))
-                .equalityFieldColumns(ImmutableList.of("block_number")).upsert(true).append();
+                .equalityFieldColumns(ImmutableList.of("block_number"))
+                // .upsert(true)
+                .append();
         // Execute the flink app
         env.execute();
     }
