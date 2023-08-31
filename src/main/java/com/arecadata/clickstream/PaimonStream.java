@@ -38,8 +38,8 @@ import com.google.common.collect.ImmutableMap;
 public class PaimonStream {
     private static final Logger LOGGER = LoggerFactory.getLogger(PaimonStream.class);
 
-    private static final Map<String, RowKind> ROW_KIND_MAP =
-            ImmutableMap.of("I", RowKind.INSERT, "D", RowKind.DELETE);
+    private static final Map<String, RowKind> ROW_KIND_MAP = ImmutableMap.of("I", RowKind.INSERT,
+            "D", RowKind.DELETE, "-U", RowKind.UPDATE_BEFORE, "U", RowKind.UPDATE_AFTER);
 
     public static void main(String[] args) throws Exception {
         LOGGER.info("PaimonStream started with args: {}", String.join(",", args));
@@ -70,7 +70,6 @@ public class PaimonStream {
         TableConfig tableConfig = tableEnv.getConfig();
         tableConfig.set("table.exec.sink.upsert-materialize", "NONE");
 
-
         tableEnv.executeSql("CREATE CATALOG paimon WITH (\n" + //
                 "    'type' = 'paimon',\n" + //
                 "    'warehouse' = 's3://iris/',\n" + //
@@ -87,12 +86,17 @@ public class PaimonStream {
         Table table = tableEnv.fromChangelogStream(stream, schema, ChangelogMode.all());
         tableEnv.createTemporaryView("sink", table);
 
-
         tableEnv.executeSql("drop table if exists test.test");
         tableEnv.executeSql(
-                "create table test.test (block_number int, hash string, `timestamp` timestamp, type string, primary key (block_number) not enforced) with ('merge-engine' = 'deduplicate')");
+                "create table test.test (block_number int, hash string, `timestamp` timestamp, type string, primary key (block_number) not enforced) with ('merge-engine' = 'deduplicate', 'log.system' = 'kafka', 'kafka.bootstrap.servers' = '127.0.0.1:9092', 'kafka.topic' = 'test', 'log.consistency' = 'eventual')");
 
         // insert into paimon table from your data stream table
         tableEnv.executeSql("INSERT INTO test.test SELECT * FROM sink");
+
+        // read from paimon table
+        Table outputTable = tableEnv.sqlQuery("select * from test.test");
+        DataStream<Row> outputDataStream = tableEnv.toChangelogStream(outputTable);
+
+        outputDataStream.executeAndCollect().forEachRemaining(System.out::println);
     }
 }
